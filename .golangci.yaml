@@ -3,13 +3,6 @@ version: "2"
 run:
   timeout: 3m
   tests: false
-  skip-dirs:
-    - vendor
-    - deploy
-    - .github
-    - build
-    - dist
-    - mocks
 
 linters:
   enable:
@@ -25,5 +18,12 @@ formatters:
     - goimports
 
 issues:
+  exclude-rules:
+    - path: ^vendor/
+    - path: ^deploy/
+    - path: ^\.github/
+    - path: ^build/
+    - path: ^dist/
+    - path: ^mocks/
   max-issues-per-linter: 0
   max-same-issues: 0
