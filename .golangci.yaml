@@ -1,11 +1,17 @@
-version: 2
+version: "2"
 
 run:
   timeout: 3m
   tests: false
+  skip-dirs:
+    - vendor
+    - deploy
+    - .github
+    - build
+    - dist
+    - mocks
 
 linters:
-  disable-all: true
   enable:
     - govet
     - staticcheck
@@ -19,12 +25,5 @@ formatters:
     - goimports
 
 issues:
-  exclude-dirs:
-    - vendor
-    - deploy
-    - .github
-    - build
-    - dist
-    - mocks
   max-issues-per-linter: 0
   max-same-issues: 0
