@@ -25,7 +25,8 @@ type EndpointSliceReconciler struct {
 	Log           logr.Logger
 	LabelSelector string
 	RequeueAfter  time.Duration
-	TableName     string // <- configurable target table (optionally schema-qualified)
+	TableName     string
+	ClusterName   string
 }
 
 func (r *EndpointSliceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -51,6 +52,7 @@ func (r *EndpointSliceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	desired := map[string]row{}
 
 	for _, ep := range es.Endpoints {
+		// Only track Ready endpoints for this minimal mode
 		if ep.Conditions.Ready != nil && !*ep.Conditions.Ready {
 			continue
 		}
@@ -76,36 +78,33 @@ func (r *EndpointSliceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	// Best-effort rollback; harmless after a successful Commit.
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	// Safely-quoted identifier for the (optional) schema-qualified table name.
-	tblIdent := sanitizeTableIdent(r.TableName)
+	tbl := sanitizeTableIdent(r.TableName) // safe "schema"."table"
 
 	for _, e := range desired {
 		q := fmt.Sprintf(`
-		  INSERT INTO %s(service, namespace, pod_uid, pod_name, ip, last_seen)
-		  VALUES ($1,$2,$3,$4,$5, now())
-		  ON CONFLICT (service, pod_uid)
-		  DO UPDATE SET ip = EXCLUDED.ip, last_seen = now()`, tblIdent)
+		  INSERT INTO %s (cluster, namespace, service, pod_uid, pod_name, pod_ip, ready, last_seen)
+		  VALUES ($1,$2,$3,$4,$5,$6,true, now())
+		  ON CONFLICT (cluster, namespace, service, pod_uid)
+		  DO UPDATE SET pod_ip = EXCLUDED.pod_ip, ready = true, last_seen = now()`, tbl)
 		if _, err := tx.Exec(ctx, q,
-			service, es.Namespace, e.UID, e.Name, e.IP); err != nil {
+			r.ClusterName, es.Namespace, service, e.UID, e.Name, e.IP); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
 
-	uidList := make([]string, 0, len(desired))
+	uids := make([]string, 0, len(desired))
 	for uid := range desired {
-		uidList = append(uidList, uid)
+		uids = append(uids, uid)
 	}
 
-	// prune rows for this {service,namespace} no longer present
+	// prune any rows for this {cluster,namespace,service} that are no longer Ready
 	qDel := fmt.Sprintf(`
 	  DELETE FROM %s
-	  WHERE service = $1 AND namespace = $2
-	    AND pod_uid <> ALL($3)`, tblIdent)
-	if _, err := tx.Exec(ctx, qDel,
-		service, es.Namespace, uidList); err != nil {
+	  WHERE cluster = $1 AND namespace = $2 AND service = $3
+	    AND pod_uid <> ALL($4)`, tbl)
+	if _, err := tx.Exec(ctx, qDel, r.ClusterName, es.Namespace, service, uids); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -113,7 +112,8 @@ func (r *EndpointSliceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	logger.V(1).Info("synced endpoints", "service", service, "namespace", es.Namespace, "count", len(desired))
+	logger.V(1).Info("synced endpoints",
+		"cluster", r.ClusterName, "namespace", es.Namespace, "service", service, "count", len(desired))
 	return ctrl.Result{RequeueAfter: r.RequeueAfter}, nil
 }
 
@@ -146,11 +146,10 @@ func matchKV(lbls map[string]string, sel string) bool {
 var _ = types.NamespacedName{}
 
 // sanitizeTableIdent returns a safely-quoted identifier suitable for SQL (supports "schema.table").
-// If name is empty, it defaults to "server".
 func sanitizeTableIdent(name string) string {
 	if name == "" {
-		name = "server"
+		name = "public.server"
 	}
 	parts := strings.Split(name, ".")
-	return pgx.Identifier(parts).Sanitize() // -> "schema"."table" or "server"
+	return pgx.Identifier(parts).Sanitize()
 }

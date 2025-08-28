@@ -37,11 +37,13 @@ func main() {
 		labelSelector string
 		watchNS       string
 		tableName     string
+		clusterName   string
 	)
 	flag.DurationVar(&requeueAfter, "requeue-after", 60*time.Second, "Periodic reconcile interval.")
 	flag.StringVar(&labelSelector, "selector", getenv("ENDPOINT_SELECTOR", ""), "EndpointSlice label selector (e.g. 'app=my-svc').")
 	flag.StringVar(&watchNS, "namespace", getenv("NAMESPACE", ""), "Namespace to watch (empty = all).")
 	flag.StringVar(&tableName, "table", getenv("TABLE_NAME", "server"), "Destination Postgres table (optionally schema-qualified, e.g. 'public.server').")
+	flag.StringVar(&clusterName, "cluster", getenv("CLUSTER_NAME", "default"), "Cluster name label to write with each row.")
 
 	zopts := zap.Options{Development: false}
 	zopts.BindFlags(flag.CommandLine)
@@ -52,6 +54,7 @@ func main() {
 	log.Info("starting",
 		"version", version.Version,
 		"selector", labelSelector,
+		"cluster", clusterName,
 		"namespace", watchNS,
 		"table", tableName,
 	)
@@ -95,6 +98,7 @@ func main() {
 		LabelSelector: labelSelector,
 		RequeueAfter:  requeueAfter,
 		TableName:     tableName,
+		ClusterName:   clusterName,
 	}).SetupWithManager(mgr); err != nil {
 		log.Error(err, "controller setup failed")
 		os.Exit(1)
