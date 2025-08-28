@@ -1,0 +1,125 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observer
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: observer-ksa
+  namespace: observer
+  # If you use GKE Workload Identity with a GCP SA, uncomment and set:
+  # annotations:
+  #   iam.gke.io/gcp-service-account: observer-sa@your-project.iam.gserviceaccount.com
+---
+# RBAC: only needs EndpointSlice read (we don't fetch Pods)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: observer
+rules:
+- apiGroups: ["discovery.k8s.io"]
+  resources: ["endpointslices"]
+  verbs: ["get","list","watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: observer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: observer
+subjects:
+- kind: ServiceAccount
+  name: observer-ksa
+  namespace: observer
+---
+# Postgres connection settings
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pg-creds
+  namespace: observer
+type: Opaque
+stringData:
+  PGHOST: "postgres.default.svc"   # <- set your host (or Cloud SQL private IP / proxy svc)
+  PGPORT: "5432"
+  PGUSER: "observer"
+  PGPASSWORD: "replace-me"
+  PGDATABASE: "infra"
+  PGSSLMODE: "require"             # "disable" for local/dev only
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: observer
+  namespace: observer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: observer
+  template:
+    metadata:
+      labels:
+        app: observer
+    spec:
+      serviceAccountName: observer-ksa
+      securityContext:
+        runAsNonRoot: true
+      containers:
+      - name: observer
+        image: ealebed/observer:latest
+        imagePullPolicy: IfNotPresent
+        args:
+          - --requeue-after=30s
+        env:
+          - name: PGHOST
+            valueFrom:
+              secretKeyRef:
+                name: pg-creds
+                key: PGHOST
+          - name: PGPORT
+            valueFrom:
+              secretKeyRef:
+                name: pg-creds
+                key: PGPORT
+          - name: PGUSER
+            valueFrom:
+              secretKeyRef:
+                name: pg-creds
+                key: PGUSER
+          - name: PGPASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: pg-creds
+                key: PGPASSWORD
+          - name: PGDATABASE
+            valueFrom:
+              secretKeyRef:
+                name: pg-creds
+                key: PGDATABASE
+          - name: PGSSLMODE
+            valueFrom:
+              secretKeyRef:
+                name: pg-creds
+                key: PGSSLMODE
+          # optional scope: select which EndpointSlices to mirror & which namespace to watch
+          - name: ENDPOINT_SELECTOR
+            value: "app=my-service"  # empty = all
+          - name: NAMESPACE
+            value: ""                # empty = all namespaces
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          # distroless:nonroot runs as 65532; keep these if your image uses that base
+          runAsUser: 65532
+          runAsGroup: 65532
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
