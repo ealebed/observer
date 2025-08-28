@@ -1,0 +1,19 @@
+# Go
+/bin
+/build
+dist/
+*.exe
+*.test
+*.out
+*.log
+
+# Modules
+vendor/
+
+# IDE
+.idea/
+.vscode/
+
+# Misc
+.DS_Store
+.env

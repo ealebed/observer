@@ -1,0 +1,9 @@
+.git
+.gitignore
+**/*.swp
+**/*.swo
+**/*.log
+dist/
+build/
+bin/
+.env
