@@ -5,12 +5,24 @@ run:
   tests: false
 
 linters:
+  # disable everything, then opt-in the few you want
+  default: none
   enable:
     - govet
     - staticcheck
     - errcheck
     - ineffassign
     - unused
+  exclusions:
+    # optional: treat "generated" laxly; remove if you don't need it
+    generated: lax
+    paths:
+      - ^vendor/
+      - ^deploy/
+      - ^\.github/
+      - ^build/
+      - ^dist/
+      - ^mocks/
 
 formatters:
   enable:
@@ -18,12 +30,5 @@ formatters:
     - goimports
 
 issues:
-  exclude-rules:
-    - path: ^vendor/
-    - path: ^deploy/
-    - path: ^\.github/
-    - path: ^build/
-    - path: ^dist/
-    - path: ^mocks/
   max-issues-per-linter: 0
   max-same-issues: 0
