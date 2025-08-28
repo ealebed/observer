@@ -107,6 +107,8 @@ spec:
                 key: PGSSLMODE
           - name: TABLE_NAME                # configurable target table (supports schema.table)
             value: "public.server"          # change if you use a different schema/table
+          - name: CLUSTER_NAME
+            value: "gke-prod-1"
           - name: ENDPOINT_SELECTOR         # optional selector; empty = all EndpointSlices
             value: "app=my-service"
           - name: NAMESPACE                 # optional watch scope; empty = all namespaces
