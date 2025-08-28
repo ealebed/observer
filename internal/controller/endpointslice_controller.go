@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/go-logr/logr"
+	pgx "github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -24,6 +25,7 @@ type EndpointSliceReconciler struct {
 	Log           logr.Logger
 	LabelSelector string
 	RequeueAfter  time.Duration
+	TableName     string // <- configurable target table (optionally schema-qualified)
 }
 
 func (r *EndpointSliceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -77,12 +79,16 @@ func (r *EndpointSliceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// Best-effort rollback; harmless after a successful Commit.
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// Safely-quoted identifier for the (optional) schema-qualified table name.
+	tblIdent := sanitizeTableIdent(r.TableName)
+
 	for _, e := range desired {
-		if _, err := tx.Exec(ctx, `
-		  INSERT INTO server(service, namespace, pod_uid, pod_name, ip, last_seen)
-		  VALUES ($1,$2,$3,$4,$5,now())
+		q := fmt.Sprintf(`
+		  INSERT INTO %s(service, namespace, pod_uid, pod_name, ip, last_seen)
+		  VALUES ($1,$2,$3,$4,$5, now())
 		  ON CONFLICT (service, pod_uid)
-		  DO UPDATE SET ip=EXCLUDED.ip, last_seen=now()`,
+		  DO UPDATE SET ip = EXCLUDED.ip, last_seen = now()`, tblIdent)
+		if _, err := tx.Exec(ctx, q,
 			service, es.Namespace, e.UID, e.Name, e.IP); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -94,10 +100,11 @@ func (r *EndpointSliceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// prune rows for this {service,namespace} no longer present
-	if _, err := tx.Exec(ctx, `
-	  DELETE FROM server
-	  WHERE service=$1 AND namespace=$2
-	    AND pod_uid <> ALL($3)`,
+	qDel := fmt.Sprintf(`
+	  DELETE FROM %s
+	  WHERE service = $1 AND namespace = $2
+	    AND pod_uid <> ALL($3)`, tblIdent)
+	if _, err := tx.Exec(ctx, qDel,
 		service, es.Namespace, uidList); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -137,3 +144,13 @@ func matchKV(lbls map[string]string, sel string) bool {
 
 // force import
 var _ = types.NamespacedName{}
+
+// sanitizeTableIdent returns a safely-quoted identifier suitable for SQL (supports "schema.table").
+// If name is empty, it defaults to "server".
+func sanitizeTableIdent(name string) string {
+	if name == "" {
+		name = "server"
+	}
+	parts := strings.Split(name, ".")
+	return pgx.Identifier(parts).Sanitize() // -> "schema"."table" or "server"
+}

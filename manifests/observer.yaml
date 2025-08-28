@@ -105,15 +105,16 @@ spec:
               secretKeyRef:
                 name: pg-creds
                 key: PGSSLMODE
-          # optional scope: select which EndpointSlices to mirror & which namespace to watch
-          - name: ENDPOINT_SELECTOR
-            value: "app=my-service"  # empty = all
-          - name: NAMESPACE
-            value: ""                # empty = all namespaces
+          - name: TABLE_NAME                # configurable target table (supports schema.table)
+            value: "public.server"          # change if you use a different schema/table
+          - name: ENDPOINT_SELECTOR         # optional selector; empty = all EndpointSlices
+            value: "app=my-service"
+          - name: NAMESPACE                 # optional watch scope; empty = all namespaces
+            value: ""
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
-          # distroless:nonroot runs as 65532; keep these if your image uses that base
+          # distroless:nonroot typically runs as 65532
           runAsUser: 65532
           runAsGroup: 65532
         resources:

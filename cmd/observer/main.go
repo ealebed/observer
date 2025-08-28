@@ -36,10 +36,12 @@ func main() {
 		requeueAfter  time.Duration
 		labelSelector string
 		watchNS       string
+		tableName     string
 	)
 	flag.DurationVar(&requeueAfter, "requeue-after", 60*time.Second, "Periodic reconcile interval.")
 	flag.StringVar(&labelSelector, "selector", getenv("ENDPOINT_SELECTOR", ""), "EndpointSlice label selector (e.g. 'app=my-svc').")
 	flag.StringVar(&watchNS, "namespace", getenv("NAMESPACE", ""), "Namespace to watch (empty = all).")
+	flag.StringVar(&tableName, "table", getenv("TABLE_NAME", "server"), "Destination Postgres table (optionally schema-qualified, e.g. 'public.server').")
 
 	zopts := zap.Options{Development: false}
 	zopts.BindFlags(flag.CommandLine)
@@ -47,7 +49,12 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zopts)))
 	log := ctrl.Log.WithName("observer")
-	log.Info("starting", "version", version.Version, "selector", labelSelector, "namespace", watchNS)
+	log.Info("starting",
+		"version", version.Version,
+		"selector", labelSelector,
+		"namespace", watchNS,
+		"table", tableName,
+	)
 
 	// ---- Postgres ----
 	pool, err := newPoolFromEnv(context.Background())
@@ -87,6 +94,7 @@ func main() {
 		Log:           ctrl.Log.WithName("endpointslice"),
 		LabelSelector: labelSelector,
 		RequeueAfter:  requeueAfter,
+		TableName:     tableName,
 	}).SetupWithManager(mgr); err != nil {
 		log.Error(err, "controller setup failed")
 		os.Exit(1)
