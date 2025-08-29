@@ -104,6 +104,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := (&controller.ServiceReconciler{
+		Client:      mgr.GetClient(),
+		DB:          pool,
+		TableName:   tableName,
+		ClusterName: clusterName,
+	}).SetupWithManager(mgr); err != nil {
+		log.Error(err, "service controller setup failed")
+		os.Exit(1)
+	}
+
 	// ---- run ----
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		log.Error(err, "manager stopped with error")

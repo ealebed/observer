@@ -14,7 +14,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/go-logr/logr"
-	pgx "github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -32,13 +31,14 @@ type EndpointSliceReconciler struct {
 func (r *EndpointSliceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithValues("slice", req.NamespacedName)
 
+	// Try to get the slice; if it's gone, we can't know the service from the name alone.
+	// The Service controller will handle the full prune on service deletion.
 	var es discoveryv1.EndpointSlice
 	if err := r.Get(ctx, req.NamespacedName, &es); err != nil {
-		// slice deleted: periodic resync will prune DB
 		return ctrl.Result{RequeueAfter: r.RequeueAfter}, client.IgnoreNotFound(err)
 	}
 
-	// optional label filter "k=v[,k=v]"
+	// Optional label filter "k=v[,k=v]" against the EndpointSlice labels
 	if r.LabelSelector != "" && !matchKV(es.Labels, r.LabelSelector) {
 		return ctrl.Result{RequeueAfter: r.RequeueAfter}, nil
 	}
@@ -48,29 +48,42 @@ func (r *EndpointSliceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{RequeueAfter: r.RequeueAfter}, nil
 	}
 
+	// ---- NEW: union across *all* EndpointSlices for this service in this namespace ----
+	var list discoveryv1.EndpointSliceList
+	if err := r.List(ctx, &list,
+		client.InNamespace(es.Namespace),
+		client.MatchingLabels(map[string]string{discoveryv1.LabelServiceName: service}),
+	); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	type row struct{ UID, Name, IP string }
 	desired := map[string]row{}
 
-	for _, ep := range es.Endpoints {
-		// Only track Ready endpoints for this minimal mode
-		if ep.Conditions.Ready != nil && !*ep.Conditions.Ready {
+	for _, sl := range list.Items {
+		// keep LabelSelector semantics: skip non-matching slices
+		if r.LabelSelector != "" && !matchKV(sl.Labels, r.LabelSelector) {
 			continue
 		}
-		if len(ep.Addresses) == 0 {
-			continue
+		for _, ep := range sl.Endpoints {
+			if ep.Conditions.Ready != nil && !*ep.Conditions.Ready {
+				continue
+			}
+			if len(ep.Addresses) == 0 {
+				continue
+			}
+			ip := ep.Addresses[0]
+			uid := ""
+			name := ""
+			if ep.TargetRef != nil && ep.TargetRef.Kind == "Pod" {
+				uid = string(ep.TargetRef.UID)
+				name = ep.TargetRef.Name
+			}
+			if uid == "" {
+				uid = fmt.Sprintf("%s/%s/%s", sl.Namespace, service, ip)
+			}
+			desired[uid] = row{UID: uid, Name: name, IP: ip}
 		}
-
-		ip := ep.Addresses[0]
-		uid := ""
-		name := ""
-		if ep.TargetRef != nil && ep.TargetRef.Kind == "Pod" {
-			uid = string(ep.TargetRef.UID)
-			name = ep.TargetRef.Name
-		}
-		if uid == "" {
-			uid = fmt.Sprintf("%s/%s/%s", es.Namespace, service, ip)
-		}
-		desired[uid] = row{UID: uid, Name: name, IP: ip}
 	}
 
 	// Upsert & prune in a single transaction
@@ -80,7 +93,7 @@ func (r *EndpointSliceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	tbl := sanitizeTableIdent(r.TableName) // safe "schema"."table"
+	tbl := sanitizeTableIdent(r.TableName)
 
 	for _, e := range desired {
 		q := fmt.Sprintf(`
@@ -99,7 +112,7 @@ func (r *EndpointSliceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		uids = append(uids, uid)
 	}
 
-	// prune any rows for this {cluster,namespace,service} that are no longer Ready
+	// prune any rows for this {cluster,namespace,service} that are no longer present
 	qDel := fmt.Sprintf(`
 	  DELETE FROM %s
 	  WHERE cluster = $1 AND namespace = $2 AND service = $3
@@ -124,7 +137,6 @@ func (r *EndpointSliceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// trivial "k=v[,k=v]" matcher (kept simple)
 func matchKV(lbls map[string]string, sel string) bool {
 	for _, p := range strings.Split(sel, ",") {
 		p = strings.TrimSpace(p)
@@ -142,14 +154,4 @@ func matchKV(lbls map[string]string, sel string) bool {
 	return true
 }
 
-// force import
 var _ = types.NamespacedName{}
-
-// sanitizeTableIdent returns a safely-quoted identifier suitable for SQL (supports "schema.table").
-func sanitizeTableIdent(name string) string {
-	if name == "" {
-		name = "public.server"
-	}
-	parts := strings.Split(name, ".")
-	return pgx.Identifier(parts).Sanitize()
-}
