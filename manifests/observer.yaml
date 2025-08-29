@@ -35,21 +35,6 @@ subjects:
   name: observer-ksa
   namespace: observer
 ---
-# Postgres connection settings
-apiVersion: v1
-kind: Secret
-metadata:
-  name: pg-creds
-  namespace: observer
-type: Opaque
-stringData:
-  PGHOST: "postgres.default.svc"   # <- set your host (or Cloud SQL private IP / proxy svc)
-  PGPORT: "5432"
-  PGUSER: "observer"
-  PGPASSWORD: "replace-me"
-  PGDATABASE: "infra"
-  PGSSLMODE: "require"             # "disable" for local/dev only
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -76,43 +61,28 @@ spec:
           - --requeue-after=30s
         env:
           - name: PGHOST
-            valueFrom:
-              secretKeyRef:
-                name: pg-creds
-                key: PGHOST
+            value: postgres.default.svc
           - name: PGPORT
-            valueFrom:
-              secretKeyRef:
-                name: pg-creds
-                key: PGPORT
+            value: "5432"
           - name: PGUSER
-            valueFrom:
-              secretKeyRef:
-                name: pg-creds
-                key: PGUSER
+            value: observer
           - name: PGPASSWORD
             valueFrom:
               secretKeyRef:
-                name: pg-creds
-                key: PGPASSWORD
+                name: apps-password
+                key: pgdb-password
           - name: PGDATABASE
-            valueFrom:
-              secretKeyRef:
-                name: pg-creds
-                key: PGDATABASE
+            value: infra
           - name: PGSSLMODE
-            valueFrom:
-              secretKeyRef:
-                name: pg-creds
-                key: PGSSLMODE
-          - name: TABLE_NAME                # configurable target table (supports schema.table)
-            value: "public.server"          # change if you use a different schema/table
+            value: "require"
+          - name: TABLE_NAME
+            value: "public.test_server"
           - name: CLUSTER_NAME
-            value: "gke-prod-1"
-          - name: ENDPOINT_SELECTOR         # optional selector; empty = all EndpointSlices
-            value: "app=my-service"
-          - name: NAMESPACE                 # optional watch scope; empty = all namespaces
-            value: ""
+            value: "gke-dev-01"
+          - name: ENDPOINT_SELECTOR
+            value: "kubernetes.io/service-name=my-service"
+          - name: NAMESPACE
+            value: "ssp-rtb"
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true

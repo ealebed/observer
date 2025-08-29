@@ -1,0 +1,34 @@
+# simple test Service + Deployment that will create EndpointSlices
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-service
+  namespace: ssp-rtb
+spec:
+  selector:
+    app: my-service
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-service
+  namespace: ssp-rtb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: my-service
+  template:
+    metadata:
+      labels:
+        app: my-service
+    spec:
+      containers:
+        - name: web
+          image: nginx:1.25-alpine
+          ports:
+            - containerPort: 80
