@@ -12,21 +12,18 @@ jobs:
       - name: 'Checkout code'
         uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.inputs.branch }}
-
-      - name: 'Check input'
-        run: |
-          if "${{ github.event.inputs.branch != '' }}"; then
-            echo "INPUT_BRANCH=${{ github.event.inputs.branch }}" >> $GITHUB_ENV
-          else
-            echo "INPUT_BRANCH=master" >> $GITHUB_ENV
-          fi
+          ref: ${{ github.event.inputs.branch || github.ref }}
 
       - name: 'Decide on tag'
         id: tagger
         run: |
-          tag=$(echo "${{ env.INPUT_BRANCH }}" | sed -e 's/^refs\/heads\///g' -e 's/^refs\/tags\///g' -e 's/^refs\/pull\///g' -e 's/\/merge$//g' | sed -e 's/master/latest/g' | sed -e 's/\//-/g')
-          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          TIMESTAMP=$(date -u +'%Y.%m.%d-%H.%M')
+          BRANCH="${{ github.event.inputs.branch || github.ref_name }}"
+          if [[ "${BRANCH}" == "master" ]]; then
+            echo "TAG=${TIMESTAMP}" >> $GITHUB_OUTPUT
+          else
+            echo "TAG=${TIMESTAMP}-SNAPSHOT" >> $GITHUB_OUTPUT
+          fi
 
       - name: 'Login to Docker Hub'
         uses: docker/login-action@v3
