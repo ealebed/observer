@@ -11,4 +11,5 @@ FROM gcr.io/distroless/static:nonroot
 COPY --from=build /out/observer /observer
 
 USER 65532:65532
+
 ENTRYPOINT ["/observer"]
