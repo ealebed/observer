@@ -19,7 +19,7 @@ jobs:
         run: |
           TIMESTAMP=$(date -u +'%Y.%m.%d-%H.%M')
           BRANCH="${{ github.event.inputs.branch || github.ref_name }}"
-          if [[ "${BRANCH}" == "main" ]]; then
+          if [[ "${BRANCH}" == "master" ]]; then
             echo "TAG=${TIMESTAMP}" >> $GITHUB_OUTPUT
           else
             echo "TAG=${TIMESTAMP}-SNAPSHOT" >> $GITHUB_OUTPUT
