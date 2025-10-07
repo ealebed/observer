@@ -9,4 +9,5 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X github.com
 FROM gcr.io/distroless/static:nonroot
 COPY --from=build /out/observer /observer
 USER 65532:65532
+
 ENTRYPOINT ["/observer"]
