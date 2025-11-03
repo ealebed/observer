@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   prevent-self-approval:
-    # Quick pre-filter: only run job if review is APPROVED
     if: github.event.review.state == 'approved'
     runs-on: ubuntu-latest
 
