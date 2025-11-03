@@ -212,5 +212,5 @@ For linting (v2 schema), a simple `.golangci.yaml` is used.
 ## Roadmap (nice-to-have)
 
 * Health/readiness endpoints (if you want probes)
-* Metrics export (Prometheus) if you later need observability
+* Metrics export (Prometheus)
 * Optional Pod enrichment (node name/IP, labels) with additional RBAC
