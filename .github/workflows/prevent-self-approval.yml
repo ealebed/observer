@@ -10,8 +10,13 @@ permissions:
 
 jobs:
   prevent-self-approval:
-    # Only run on APPROVED reviews
-    if: github.event.review.state == 'approved'
+    # Only run for APPROVED reviews on autocherry PRs
+    if: >
+      github.event.review.state == 'approved' &&
+      (
+        startsWith(github.event.pull_request.title, 'Auto cherry-pick:') ||
+        startsWith(github.event.pull_request.head.ref, 'autocherry/')
+      )
     runs-on: ubuntu-latest
 
     steps:
