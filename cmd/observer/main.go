@@ -31,6 +31,12 @@ func init() {
 }
 
 func main() {
+	if err := run(); err != nil {
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	// ---- flags & env ----
 	var (
 		requeueAfter  time.Duration
@@ -63,7 +69,7 @@ func main() {
 	pool, err := newPoolFromEnv(context.Background())
 	if err != nil {
 		log.Error(err, "postgres connect failed")
-		os.Exit(1)
+		return err
 	}
 	defer pool.Close()
 
@@ -87,7 +93,7 @@ func main() {
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), opts)
 	if err != nil {
 		log.Error(err, "manager start failed")
-		os.Exit(1)
+		return err
 	}
 
 	// ---- controller ----
@@ -101,7 +107,7 @@ func main() {
 		ClusterName:   clusterName,
 	}).SetupWithManager(mgr); err != nil {
 		log.Error(err, "controller setup failed")
-		os.Exit(1)
+		return err
 	}
 
 	if err := (&controller.ServiceReconciler{
@@ -111,14 +117,15 @@ func main() {
 		ClusterName: clusterName,
 	}).SetupWithManager(mgr); err != nil {
 		log.Error(err, "service controller setup failed")
-		os.Exit(1)
+		return err
 	}
 
 	// ---- run ----
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		log.Error(err, "manager stopped with error")
-		os.Exit(1)
+		return err
 	}
+	return nil
 }
 
 func newPoolFromEnv(ctx context.Context) (*pgxpool.Pool, error) {

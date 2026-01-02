@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/go-logr/logr"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -26,6 +27,12 @@ type EndpointSliceReconciler struct {
 	RequeueAfter  time.Duration
 	TableName     string
 	ClusterName   string
+}
+
+type endpointRow struct {
+	UID  string
+	Name string
+	IP   string
 }
 
 func (r *EndpointSliceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -57,8 +64,19 @@ func (r *EndpointSliceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	type row struct{ UID, Name, IP string }
-	desired := map[string]row{}
+	desired := r.buildDesiredRows(&list, service)
+
+	if err := r.syncToDatabase(ctx, desired, es.Namespace, service); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	logger.V(1).Info("synced endpoints",
+		"cluster", r.ClusterName, "namespace", es.Namespace, "service", service, "count", len(desired))
+	return ctrl.Result{RequeueAfter: r.RequeueAfter}, nil
+}
+
+func (r *EndpointSliceReconciler) buildDesiredRows(list *discoveryv1.EndpointSliceList, service string) map[string]endpointRow {
+	desired := map[string]endpointRow{}
 
 	for _, sl := range list.Items {
 		// keep LabelSelector semantics: skip non-matching slices
@@ -66,45 +84,50 @@ func (r *EndpointSliceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			continue
 		}
 		for _, ep := range sl.Endpoints {
-			if ep.Conditions.Ready != nil && !*ep.Conditions.Ready {
-				continue
+			row := r.endpointToRow(&ep, sl.Namespace, service)
+			if row != nil {
+				desired[row.UID] = *row
 			}
-			if len(ep.Addresses) == 0 {
-				continue
-			}
-			ip := ep.Addresses[0]
-			uid := ""
-			name := ""
-			if ep.TargetRef != nil && ep.TargetRef.Kind == "Pod" {
-				uid = string(ep.TargetRef.UID)
-				name = ep.TargetRef.Name
-			}
-			if uid == "" {
-				uid = fmt.Sprintf("%s/%s/%s", sl.Namespace, service, ip)
-			}
-			desired[uid] = row{UID: uid, Name: name, IP: ip}
 		}
 	}
 
-	// Upsert & prune in a single transaction
+	return desired
+}
+
+func (r *EndpointSliceReconciler) endpointToRow(ep *discoveryv1.Endpoint, namespace, service string) *endpointRow {
+	if ep.Conditions.Ready != nil && !*ep.Conditions.Ready {
+		return nil
+	}
+	if len(ep.Addresses) == 0 {
+		return nil
+	}
+
+	ip := ep.Addresses[0]
+	uid := ""
+	name := ""
+
+	if ep.TargetRef != nil && ep.TargetRef.Kind == "Pod" {
+		uid = string(ep.TargetRef.UID)
+		name = ep.TargetRef.Name
+	}
+	if uid == "" {
+		uid = fmt.Sprintf("%s/%s/%s", namespace, service, ip)
+	}
+
+	return &endpointRow{UID: uid, Name: name, IP: ip}
+}
+
+func (r *EndpointSliceReconciler) syncToDatabase(ctx context.Context, desired map[string]endpointRow, namespace, service string) error {
 	tx, err := r.DB.Begin(ctx)
 	if err != nil {
-		return ctrl.Result{}, err
+		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	tbl := sanitizeTableIdent(r.TableName)
 
-	for _, e := range desired {
-		q := fmt.Sprintf(`
-		  INSERT INTO %s (cluster, namespace, service, pod_uid, pod_name, pod_ip, ready, last_seen)
-		  VALUES ($1,$2,$3,$4,$5,$6,true, now())
-		  ON CONFLICT (cluster, namespace, service, pod_uid)
-		  DO UPDATE SET pod_ip = EXCLUDED.pod_ip, ready = true, last_seen = now()`, tbl)
-		if _, err := tx.Exec(ctx, q,
-			r.ClusterName, es.Namespace, service, e.UID, e.Name, e.IP); err != nil {
-			return ctrl.Result{}, err
-		}
+	if err := r.upsertRows(ctx, tx, tbl, desired, namespace, service); err != nil {
+		return err
 	}
 
 	uids := make([]string, 0, len(desired))
@@ -112,22 +135,35 @@ func (r *EndpointSliceReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		uids = append(uids, uid)
 	}
 
-	// prune any rows for this {cluster,namespace,service} that are no longer present
+	if err := r.pruneRows(ctx, tx, tbl, namespace, service, uids); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
+func (r *EndpointSliceReconciler) upsertRows(ctx context.Context, tx pgx.Tx, tbl string, desired map[string]endpointRow, namespace, service string) error {
+	for _, e := range desired {
+		q := fmt.Sprintf(`
+		  INSERT INTO %s (cluster, namespace, service, pod_uid, pod_name, pod_ip, ready, last_seen)
+		  VALUES ($1,$2,$3,$4,$5,$6,true, now())
+		  ON CONFLICT (cluster, namespace, service, pod_uid)
+		  DO UPDATE SET pod_ip = EXCLUDED.pod_ip, ready = true, last_seen = now()`, tbl)
+		if _, err := tx.Exec(ctx, q,
+			r.ClusterName, namespace, service, e.UID, e.Name, e.IP); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *EndpointSliceReconciler) pruneRows(ctx context.Context, tx pgx.Tx, tbl, namespace, service string, uids []string) error {
 	qDel := fmt.Sprintf(`
 	  DELETE FROM %s
 	  WHERE cluster = $1 AND namespace = $2 AND service = $3
 	    AND pod_uid <> ALL($4)`, tbl)
-	if _, err := tx.Exec(ctx, qDel, r.ClusterName, es.Namespace, service, uids); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	logger.V(1).Info("synced endpoints",
-		"cluster", r.ClusterName, "namespace", es.Namespace, "service", service, "count", len(desired))
-	return ctrl.Result{RequeueAfter: r.RequeueAfter}, nil
+	_, err := tx.Exec(ctx, qDel, r.ClusterName, namespace, service, uids)
+	return err
 }
 
 func (r *EndpointSliceReconciler) SetupWithManager(mgr ctrl.Manager) error {
