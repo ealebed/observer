@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/go-logr/logr v1.4.3
-	github.com/jackc/pgx/v5 v5.9.1
+	github.com/jackc/pgx/v5 v5.9.2
 	k8s.io/api v0.35.4
 	k8s.io/apimachinery v0.35.4
 	k8s.io/client-go v0.35.4
