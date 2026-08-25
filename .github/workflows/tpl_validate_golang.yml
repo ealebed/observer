@@ -9,14 +9,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      GOLANGCI_LINT_VERSION: v2.12.2
+      GOLANGCI_LINT_VERSION: v2.13.0
 
     steps:
       - name: 'Checkout code'
         uses: actions/checkout@v7
 
       - name: 'Install Golang'
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -31,6 +31,9 @@ jobs:
 
       - name: 'Go vet'
         run: go vet ./...
+
+      - name: 'Build'
+        run: go build -o /dev/null ./cmd/observer
 
       - name: 'golangci lint'
         uses: golangci/golangci-lint-action@v9
