@@ -209,6 +209,12 @@ For linting (v2 schema), a simple `.golangci.yaml` is used.
 
 ---
 
+## Dependabot automation
+
+Minor and patch Dependabot PRs are approved and squash-merged by a GitHub App after required CI passes. See [Dependabot automation](./docs/dependabot-automation.md).
+
+---
+
 ## Roadmap (nice-to-have)
 
 * Health/readiness endpoints (if you want probes)
